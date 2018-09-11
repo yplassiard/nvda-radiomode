@@ -1,24 +1,23 @@
+from ctypes import c_buffer, windll
+from random import random
+from time import sleep
+from sys import getfilesystemencoding
+import threading
+
 class PlaysoundException(Exception):
     pass
-
-def _playsoundWin(sound, block = True):
-    '''
-    Utilizes windll.winmm. Tested and known to work with MP3 and WAVE on
-    Windows 7 with Python 2.7. Probably works with more file formats.
-    Probably works on Windows XP thru Windows 10. Probably works with all
-    versions of Python.
-
-    Inspired by (but not copied from) Michael Gundlach <gundlach@gmail.com>'s mp3play:
-    https://github.com/michaelgundlach/mp3play
-
-    I never would have tried using windll.winmm without seeing his code.
-    '''
-    from ctypes import c_buffer, windll
-    from random import random
-    from time   import sleep
-    from sys    import getfilesystemencoding
-
-    def winCommand(*command):
+class Player(threading.Thread):
+    playing = False
+    position = 0
+    alias = None
+    
+    
+    def __init__(self, sound):
+        super(Player, self).__init__()
+        self.load(sound)
+    
+    def winCommand(self, *command):
+        """Sends a Command to the WinMM interface."""
         buf = c_buffer(255)
         command = ' '.join(command).encode(getfilesystemencoding())
         errorCode = int(windll.winmm.mciSendStringA(command, buf, 254, 0))
@@ -31,95 +30,56 @@ def _playsoundWin(sound, block = True):
             raise PlaysoundException(exceptionMessage)
         return buf.value
 
-    alias = 'playsound_' + str(random())
-    winCommand('open "' + sound + '" alias', alias)
-    winCommand('set', alias, 'time format milliseconds')
-    durationInMS = winCommand('status', alias, 'length')
-    winCommand('play', alias, 'from 0 to', durationInMS.decode())
+    def load(self, sound):
+        if self.playing is True:
+            self.stop()
+        if self.alias is not None:
+            self.winCommand('close', self.alias)
+            self.alias = None
+        self.alias = 'playsound_' + str(random())
+        self.winCommand('open "' + sound + '" alias', self.alias)
+        self.winCommand('set', self.alias, 'time format milliseconds')
+        self.durationInMS = self.winCommand('status', self.alias, 'length')
+        return True
+    def play(self, deviceId=-1, fromStart=True):
+        if self.isPlaying is True:
+            self.stop()
+        if fromStart is True:
+            position = 0
+        else:
+            position = self.curPosition
+        self.winCommand('set', self.alias, 'output', str(deviceId))
+        self.winCommand('play', self.alias, 'from ', str(position), 'to', self.durationInMS.decode())
+        self.playing = True
 
-    if block:
-        sleep(float(durationInMS) / 1000.0)
+    def stop(self):
+        self.winCommand('stop', self.alias)
+        self.curPosition = 0
+        self.playing = False
+    def pause(self):
+        if self.playing:
+            self.winCommand('pause', self.alias)
+            self.playing = False
+    
+        
+    def run(self):
+        while self.shouldQuit is False:
+            time.sleep(0.1)
+            position = self.winCommand('status', self.alias, 'position')
+            if position == self.curPosition:
+                self.playing = False
+            self.curPosition = position
+        self.stop()
+        self.winCommand('close', self.alias)
+        self.position = 0
+        self.alias = None
 
-def _playsoundOSX(sound, block = True):
-    '''
-    Utilizes AppKit.NSSound. Tested and known to work with MP3 and WAVE on
-    OS X 10.11 with Python 2.7. Probably works with anything QuickTime supports.
-    Probably works on OS X 10.5 and newer. Probably works with all versions of
-    Python.
+    def isPlaying(self):
+        return self.playing
 
-    Inspired by (but not copied from) Aaron's Stack Overflow answer here:
-    http://stackoverflow.com/a/34568298/901641
-
-    I never would have tried using AppKit.NSSound without seeing his code.
-    '''
-    from AppKit     import NSSound
-    from Foundation import NSURL
-    from time       import sleep
-
-    if '://' not in sound:
-        if not sound.startswith('/'):
-            from os import getcwd
-            sound = getcwd() + '/' + sound
-        sound = 'file://' + sound
-    url   = NSURL.URLWithString_(sound)
-    nssound = NSSound.alloc().initWithContentsOfURL_byReference_(url, True)
-    if not nssound:
-        raise IOError('Unable to load sound named: ' + sound)
-    nssound.play()
-
-    if block:
-        sleep(nssound.duration())
-
-def _playsoundNix(sound, block=True):
-    """Play a sound using GStreamer.
-
-    Inspired by this:
-    https://gstreamer.freedesktop.org/documentation/tutorials/playback/playbin-usage.html
-    """
-    if not block:
-        raise NotImplementedError(
-            "block=False cannot be used on this platform yet")
-
-    # pathname2url escapes non-URL-safe characters
-    import os
-    try:
-        from urllib.request import pathname2url
-    except ImportError:
-        # python 2
-        from urllib import pathname2url
-
-    import gi
-    gi.require_version('Gst', '1.0')
-    from gi.repository import Gst
-
-    Gst.init(None)
-
-    playbin = Gst.ElementFactory.make('playbin', 'playbin')
-    if sound.startswith(('http://', 'https://')):
-        playbin.props.uri = sound
-    else:
-        playbin.props.uri = 'file://' + pathname2url(os.path.abspath(sound))
-
-    set_result = playbin.set_state(Gst.State.PLAYING)
-    if set_result != Gst.StateChangeReturn.ASYNC:
-        raise PlaysoundException(
-            "playbin.set_state returned " + repr(set_result))
-
-    # FIXME: use some other bus method than poll() with block=False
-    # https://lazka.github.io/pgi-docs/#Gst-1.0/classes/Bus.html
-    bus = playbin.get_bus()
-    bus.poll(Gst.MessageType.EOS, Gst.CLOCK_TIME_NONE)
-    playbin.set_state(Gst.State.NULL)
+    def isStopped(self):
+        return True if self.playing is False and self.position == 0 else False
+    
+    
 
 
-from platform import system
-system = system()
-
-if system == 'Windows':
-    playsound = _playsoundWin
-elif system == 'Darwin':
-    playsound = _playsoundOSX
-else:
-    playsound = _playsoundNix
-
-del system
