@@ -1,0 +1,8 @@
+language: python
+python:
+ - "2.7"
+install:
+  - pip install scons
+script:
+  - scons
+after_script: mv nvda-radiomode*.nvda-addon nvda-radiomode-latest.nvda-addon
