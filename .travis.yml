@@ -5,4 +5,4 @@ install:
   - pip install scons
 script:
   - scons
-after_script: mv nvda-radiomode*.nvda-addon nvda-radiomode-latest.nvda-addon
+after_script: mv radiomode*.nvda-addon radiomode-latest.nvda-addon
